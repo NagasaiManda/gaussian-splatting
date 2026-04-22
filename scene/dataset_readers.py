@@ -142,6 +142,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
+
 def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
@@ -177,16 +178,19 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
             sys.exit(1)
 
     if eval:
-        if "360" in path:
+        # 1. Force llffhold to 8 if it's not set, regardless of path name
+        if not llffhold or llffhold <= 0:
             llffhold = 8
-        if llffhold:
-            print("------------LLFF HOLD-------------")
-            cam_names = [cam_extrinsics[cam_id].name for cam_id in cam_extrinsics]
-            cam_names = sorted(cam_names)
-            test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
-        else:
-            with open(os.path.join(path, "sparse/0", "test.txt"), 'r') as file:
-                test_cam_names_list = [line.strip() for line in file]
+            
+        print(f"------------ LLFF HOLD: {llffhold} -------------")
+        
+        # 2. Extract and SORT names to ensure the 8th image is consistent
+        cam_names = sorted([cam_extrinsics[cam_id].name for cam_id in cam_extrinsics])
+        
+        # 3. Create the test list using modulo
+        test_cam_names_list = [name for idx, name in enumerate(cam_names) if idx % llffhold == 0]
+        
+        print(f"Testing on {len(test_cam_names_list)} images. Training on {len(cam_names) - len(test_cam_names_list)} images.")
     else:
         test_cam_names_list = []
 
@@ -197,7 +201,10 @@ def readColmapSceneInfo(path, images, depths, eval, train_test_exp, llffhold=8):
         depths_folder=os.path.join(path, depths) if depths != "" else "", test_cam_names_list=test_cam_names_list)
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
-    train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
+    # train_cam_infos = [c for c in cam_infos if train_test_exp or not c.is_test]
+    # test_cam_infos = [c for c in cam_infos if c.is_test]
+
+    train_cam_infos = [c for c in cam_infos if not c.is_test]
     test_cam_infos = [c for c in cam_infos if c.is_test]
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
