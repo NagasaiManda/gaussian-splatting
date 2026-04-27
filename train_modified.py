@@ -219,11 +219,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
         
-        # 7. Total Weighted Loss (using your existing scheduling)
-        progress = iteration / opt.iterations
-        curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress  # From 1.0 down to 0.1
-        curr_lambda_hr = 0.2 * (1.0 - progress) + 1.0 * progress  # From 0.2 up to 1.0
+        # # 7. Total Weighted Loss (using your existing scheduling)
+        # progress = iteration / opt.iterations
+        # curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress  # From 1.0 down to 0.1
+        # curr_lambda_hr = 0.2 * (1.0 - progress) + 1.0 * progress  # From 0.2 up to 1.0
+        # loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
+
+
+        phase_1_iters = 10000
+
+        if iteration <= phase_1_iters:
+            # Phase 1 [0 - 10k]: Pure Shape Building
+            # Rely 100% on true low-res data to anchor macro-geometry
+            curr_lambda_lr = 1.0
+            curr_lambda_hr = 0.0
+        else:
+            # Phase 2 [10k - End]: Detail Refinement
+            # Normalize progress for the remaining iterations
+            remaining_iters = opt.iterations - phase_1_iters
+            progress = (iteration - phase_1_iters) / remaining_iters
+            
+            # Smoothly fade LR weight down from 1.0 to 0.1
+            curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress
+            
+            # Smoothly fade HR weight up from 0.0 to 1.0
+            curr_lambda_hr = 0.0 * (1.0 - progress) + 1.0 * progress
+            
         loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
+        
         # # Render
         # if (iteration - 1) == debug_from:
         #     pipe.debug = True
