@@ -237,7 +237,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             # Phase 2 [10k - End]: Detail Refinement
             # Normalize progress for the remaining iterations
             remaining_iters = opt.iterations - phase_1_iters
-            progress = (iteration - phase_1_iters) / remaining_iters
+            progress = min((iteration - phase_1_iters) / 10000, 1)
             
             # Smoothly fade LR weight down from 1.0 to 0.1
             curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress
