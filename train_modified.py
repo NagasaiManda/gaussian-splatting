@@ -387,8 +387,16 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         
         # Softer confidence (LESS aggressive than exp(-5x))
         conf = torch.exp(-2.0 * consistency)
+
+        # 🔥 Upsample LR confidence to HR
+        conf = torch.nn.functional.interpolate(
+            conf.unsqueeze(0),
+            size=edge_mask.shape[1:],
+            mode='bilinear',
+            align_corners=False
+        ).squeeze(0)
         
-        # Final mask (with floor to avoid killing gradients)
+        # Combine masks
         mask_final = 0.3 + 0.7 * (0.5 * edge_mask + 0.5 * conf)
         
         # Apply mask correctly (pixel-wise)
