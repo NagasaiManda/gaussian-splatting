@@ -310,7 +310,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # ✅ Camera perturbation (VERY IMPORTANT for sparse views)
         render_cam = viewpoint_cam
-        if iteration < 20000:
+        if iteration < 8000:
             render_cam = get_perturbed_cam(
                 viewpoint_cam,
                 translation_std=0.003,
@@ -375,19 +375,19 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
 
         # ---------------------- SCHEDULING ----------------------
-        phase_1_iters = 10000
+        phase_1_iters = 12000
 
         if iteration <= phase_1_iters:
             curr_lambda_lr = 1.0
             curr_lambda_hr = 0.0
         else:
-            progress = min((iteration - phase_1_iters) / 15000, 1.0)
+            progress = min((iteration - phase_1_iters) / 20000, 1.0)
 
-            curr_lambda_hr = min(progress * 0.7, 0.7)
-            curr_lambda_lr = max(1.0 - curr_lambda_hr, 0.3)
+            curr_lambda_hr = 0.2 * progress
+            curr_lambda_lr = 1
 
         # ✅ Strong LR anchoring
-        loss = (curr_lambda_hr * loss_hr) + (2.0 * curr_lambda_lr * loss_lr)
+        loss = (curr_lambda_hr * loss_hr) + (3.0 * curr_lambda_lr * loss_lr)
 
     
         
