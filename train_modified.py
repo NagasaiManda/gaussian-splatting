@@ -144,108 +144,108 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         vind = viewpoint_indices.pop(rand_idx)
 
 
-        # Render
-        if (iteration - 1) == debug_from:
-            pipe.debug = True
+#         # Render
+#         if (iteration - 1) == debug_from:
+#             pipe.debug = True
 
-        bg = torch.rand((3), device="cuda") if opt.random_background else background
-
-
-        # if iteration < opt.iterations:
-        #     render_cam = get_perturbed_cam(viewpoint_cam, translation_std=0.001) 
-        # else:
-            # render_cam = viewpoint_cam
-        render_cam = viewpoint_cam
-# Render with the jiggled camera
-        render_pkg = render(render_cam, gaussians, pipe, bg, 
-                    use_trained_exp=dataset.train_test_exp, 
-                    separate_sh=SPARSE_ADAM_AVAILABLE)
-        # render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
-        image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
-
-        if viewpoint_cam.alpha_mask is not None:
-            alpha_mask = viewpoint_cam.alpha_mask.cuda()
-            image *= alpha_mask
-
-        # Loss
-        # gt_image = viewpoint_cam.original_image.cuda()
-        # Ll1 = l1_loss(image, gt_image)
-        # if FUSED_SSIM_AVAILABLE:
-        #     ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
-        # else:
-        #     ssim_value = ssim(image, gt_image)
-
-        # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
+#         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
 
+#         # if iteration < opt.iterations:
+#         #     render_cam = get_perturbed_cam(viewpoint_cam, translation_std=0.001) 
+#         # else:
+#             # render_cam = viewpoint_cam
+#         render_cam = viewpoint_cam
+# # Render with the jiggled camera
+#         render_pkg = render(render_cam, gaussians, pipe, bg, 
+#                     use_trained_exp=dataset.train_test_exp, 
+#                     separate_sh=SPARSE_ADAM_AVAILABLE)
+#         # render_pkg = render(viewpoint_cam, gaussians, pipe, bg, use_trained_exp=dataset.train_test_exp, separate_sh=SPARSE_ADAM_AVAILABLE)
+#         image, viewspace_point_tensor, visibility_filter, radii = render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"]
+
+#         if viewpoint_cam.alpha_mask is not None:
+#             alpha_mask = viewpoint_cam.alpha_mask.cuda()
+#             image *= alpha_mask
+
+#         # Loss
+#         # gt_image = viewpoint_cam.original_image.cuda()
+#         # Ll1 = l1_loss(image, gt_image)
+#         # if FUSED_SSIM_AVAILABLE:
+#         #     ssim_value = fused_ssim(image.unsqueeze(0), gt_image.unsqueeze(0))
+#         # else:
+#         #     ssim_value = ssim(image, gt_image)
+
+#         # loss = (1.0 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1.0 - ssim_value)
 
 
-        ######################################################################################################
+
+
+#         ######################################################################################################
         
-        gt_image_hr = viewpoint_cam.original_image.cuda()
+#         gt_image_hr = viewpoint_cam.original_image.cuda()
         
-        # 2. Get the actual LR ground truth (the original un-processed images)
-        gt_image_lr = load_lr_gt(viewpoint_cam, dataset.source_path)
+#         # 2. Get the actual LR ground truth (the original un-processed images)
+#         gt_image_lr = load_lr_gt(viewpoint_cam, dataset.source_path)
         
-        # 3. Render at HR (this is what the 'render' function already does)
-        image_hr = render_pkg["render"]
+#         # 3. Render at HR (this is what the 'render' function already does)
+#         image_hr = render_pkg["render"]
         
-        # 4. Downsample the rendered HR image to match LR resolution
-        # We use area interpolation as it's standard for downsampling
-        lr_height, lr_width = gt_image_lr.shape[1], gt_image_lr.shape[2]
-        image_lr_rendered = torch.nn.functional.interpolate(
-            image_hr.unsqueeze(0), 
-            size=(lr_height, lr_width), 
-            mode='area'
-        ).squeeze(0)
+#         # 4. Downsample the rendered HR image to match LR resolution
+#         # We use area interpolation as it's standard for downsampling
+#         lr_height, lr_width = gt_image_lr.shape[1], gt_image_lr.shape[2]
+#         image_lr_rendered = torch.nn.functional.interpolate(
+#             image_hr.unsqueeze(0), 
+#             size=(lr_height, lr_width), 
+#             mode='area'
+#         ).squeeze(0)
 
-        # 5. Compute HR Loss (vs. Super-resolved images)
-        Ll1_hr = l1_loss(image_hr, gt_image_hr)
-        # Use fused_ssim if available for speed, otherwise standard ssim
-        if FUSED_SSIM_AVAILABLE:
-            ssim_hr = fused_ssim(image_hr.unsqueeze(0), gt_image_hr.unsqueeze(0))
-        else:
-            ssim_hr = ssim(image_hr, gt_image_hr)
+#         # 5. Compute HR Loss (vs. Super-resolved images)
+#         Ll1_hr = l1_loss(image_hr, gt_image_hr)
+#         # Use fused_ssim if available for speed, otherwise standard ssim
+#         if FUSED_SSIM_AVAILABLE:
+#             ssim_hr = fused_ssim(image_hr.unsqueeze(0), gt_image_hr.unsqueeze(0))
+#         else:
+#             ssim_hr = ssim(image_hr, gt_image_hr)
         
-        # Standard 3DGS formula: (1-lambda)*L1 + lambda*(1-SSIM)
-        loss_hr = (1.0 - opt.lambda_dssim) * Ll1_hr + opt.lambda_dssim * (1.0 - ssim_hr)
+#         # Standard 3DGS formula: (1-lambda)*L1 + lambda*(1-SSIM)
+#         loss_hr = (1.0 - opt.lambda_dssim) * Ll1_hr + opt.lambda_dssim * (1.0 - ssim_hr)
         
-        # 6. Compute LR Loss (Anchor Loss)
-        Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
-        if FUSED_SSIM_AVAILABLE:
-            ssim_lr = fused_ssim(image_lr_rendered.unsqueeze(0), gt_image_lr.unsqueeze(0))
-        else:
-            ssim_lr = ssim(image_lr_rendered, gt_image_lr)
+#         # 6. Compute LR Loss (Anchor Loss)
+#         Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
+#         if FUSED_SSIM_AVAILABLE:
+#             ssim_lr = fused_ssim(image_lr_rendered.unsqueeze(0), gt_image_lr.unsqueeze(0))
+#         else:
+#             ssim_lr = ssim(image_lr_rendered, gt_image_lr)
         
-        loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
+#         loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
         
-        # # 7. Total Weighted Loss (using your existing scheduling)
-        # progress = iteration / opt.iterations
-        # curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress  # From 1.0 down to 0.1
-        # curr_lambda_hr = 0.2 * (1.0 - progress) + 1.0 * progress  # From 0.2 up to 1.0
-        # loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
+#         # # 7. Total Weighted Loss (using your existing scheduling)
+#         # progress = iteration / opt.iterations
+#         # curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress  # From 1.0 down to 0.1
+#         # curr_lambda_hr = 0.2 * (1.0 - progress) + 1.0 * progress  # From 0.2 up to 1.0
+#         # loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
 
 
-        phase_1_iters = 10000
+#         phase_1_iters = 10000
 
-        if iteration <= phase_1_iters:
-            # Phase 1 [0 - 10k]: Pure Shape Building
-            # Rely 100% on true low-res data to anchor macro-geometry
-            curr_lambda_lr = 1.0
-            curr_lambda_hr = 0.0
-        else:
-            # Phase 2 [10k - End]: Detail Refinement
-            # Normalize progress for the remaining iterations
-            remaining_iters = opt.iterations - phase_1_iters
-            progress = min((iteration - phase_1_iters) / 10000, 1)
+#         if iteration <= phase_1_iters:
+#             # Phase 1 [0 - 10k]: Pure Shape Building
+#             # Rely 100% on true low-res data to anchor macro-geometry
+#             curr_lambda_lr = 1.0
+#             curr_lambda_hr = 0.0
+#         else:
+#             # Phase 2 [10k - End]: Detail Refinement
+#             # Normalize progress for the remaining iterations
+#             remaining_iters = opt.iterations - phase_1_iters
+#             progress = min((iteration - phase_1_iters) / 10000, 1)
             
-            # Smoothly fade LR weight down from 1.0 to 0.1
-            curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress
+#             # Smoothly fade LR weight down from 1.0 to 0.1
+#             curr_lambda_lr = 1.0 * (1.0 - progress) + 0.1 * progress
             
-            # Smoothly fade HR weight up from 0.0 to 1.0
-            curr_lambda_hr = 0.0 * (1.0 - progress) + 1.0 * progress
+#             # Smoothly fade HR weight up from 0.0 to 1.0
+#             curr_lambda_hr = 0.0 * (1.0 - progress) + 1.0 * progress
             
-        loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
+#         loss = (curr_lambda_hr * loss_hr) + (curr_lambda_lr * loss_lr)
         
         # # Render
         # if (iteration - 1) == debug_from:
@@ -302,7 +302,95 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # lambda_lr = 1.0  
         # lambda_hr = 0.5  # Adjust this: higher means more detail, but more risk of artifacts
         # loss = (lambda_hr * loss_hr) + (lambda_lr * loss_lr)
+         # ---------------------- RENDER ----------------------
+        if (iteration - 1) == debug_from:
+            pipe.debug = True
 
+        bg = background  # disable random background for stability
+
+        # ✅ Camera perturbation (VERY IMPORTANT for sparse views)
+        render_cam = viewpoint_cam
+        if iteration < 20000:
+            render_cam = get_perturbed_cam(
+                viewpoint_cam,
+                translation_std=0.003,
+                rotation_std=0.002
+            )
+
+        render_pkg = render(
+            render_cam,
+            gaussians,
+            pipe,
+            bg,
+            use_trained_exp=dataset.train_test_exp,
+            separate_sh=SPARSE_ADAM_AVAILABLE
+        )
+
+        image_hr = render_pkg["render"]
+        viewspace_point_tensor = render_pkg["viewspace_points"]
+        visibility_filter = render_pkg["visibility_filter"]
+        radii = render_pkg["radii"]
+
+        if viewpoint_cam.alpha_mask is not None:
+            alpha_mask = viewpoint_cam.alpha_mask.cuda()
+            image_hr *= alpha_mask
+
+        # ---------------------- GT ----------------------
+        gt_image_hr = viewpoint_cam.original_image.cuda()
+        gt_image_lr = load_lr_gt(viewpoint_cam, dataset.source_path)
+
+        # ---------------------- LR RENDER ----------------------
+        lr_height, lr_width = gt_image_lr.shape[1], gt_image_lr.shape[2]
+
+        image_lr_rendered = torch.nn.functional.interpolate(
+            image_hr.unsqueeze(0),
+            size=(lr_height, lr_width),
+            mode='area'
+        ).squeeze(0)
+
+        # ---------------------- HR LOSS ----------------------
+        Ll1_hr = l1_loss(image_hr, gt_image_hr)
+
+        if FUSED_SSIM_AVAILABLE:
+            ssim_hr = fused_ssim(image_hr.unsqueeze(0), gt_image_hr.unsqueeze(0))
+        else:
+            ssim_hr = ssim(image_hr, gt_image_hr)
+
+        loss_hr = (1.0 - opt.lambda_dssim) * Ll1_hr + opt.lambda_dssim * (1.0 - ssim_hr)
+
+        # ---------------------- CONFIDENCE MASK (NEW) ----------------------
+        grad = torch.mean(torch.abs(image_hr[:, :, :-1] - image_hr[:, :, 1:]), dim=0)
+        mask = (grad > 0.05).float().unsqueeze(0)
+
+        loss_hr = (loss_hr * mask).mean()
+
+        # ---------------------- LR LOSS ----------------------
+        Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
+
+        if FUSED_SSIM_AVAILABLE:
+            ssim_lr = fused_ssim(image_lr_rendered.unsqueeze(0), gt_image_lr.unsqueeze(0))
+        else:
+            ssim_lr = ssim(image_lr_rendered, gt_image_lr)
+
+        loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
+
+        # ---------------------- SCHEDULING ----------------------
+        phase_1_iters = 10000
+
+        if iteration <= phase_1_iters:
+            curr_lambda_lr = 1.0
+            curr_lambda_hr = 0.0
+        else:
+            progress = min((iteration - phase_1_iters) / 15000, 1.0)
+
+            curr_lambda_hr = min(progress * 0.7, 0.7)
+            curr_lambda_lr = max(1.0 - curr_lambda_hr, 0.3)
+
+        # ✅ Strong LR anchoring
+        loss = (curr_lambda_hr * loss_hr) + (2.0 * curr_lambda_lr * loss_lr)
+
+    
+        
 
         # Depth regularization
         Ll1depth_pure = 0.0
