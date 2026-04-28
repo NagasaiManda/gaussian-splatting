@@ -22,6 +22,8 @@ from tqdm import tqdm
 from utils.image_utils import psnr
 from argparse import ArgumentParser, Namespace
 from arguments import ModelParams, PipelineParams, OptimizationParams
+import torch.nn.functional as F
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
@@ -132,7 +134,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
-        if iteration % 1000 == 0:
+        # if iteration % 1000 == 0:
+        #     gaussians.oneupSHdegree()
+
+        if iteration > 20000 and iteration % 2000 == 0:
             gaussians.oneupSHdegree()
 
         # Pick a random Camera
@@ -302,13 +307,13 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         # lambda_lr = 1.0  
         # lambda_hr = 0.5  # Adjust this: higher means more detail, but more risk of artifacts
         # loss = (lambda_hr * loss_hr) + (lambda_lr * loss_lr)
-         # ---------------------- RENDER ----------------------
+        # ---------------------- RENDER ----------------------
         if (iteration - 1) == debug_from:
             pipe.debug = True
-
+        
         bg = background  # disable random background for stability
-
-        # ✅ Camera perturbation (VERY IMPORTANT for sparse views)
+        
+        # ✅ Camera perturbation (early only)
         render_cam = viewpoint_cam
         if iteration < 8000:
             render_cam = get_perturbed_cam(
@@ -316,7 +321,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 translation_std=0.003,
                 rotation_std=0.002
             )
-
+        
         render_pkg = render(
             render_cam,
             gaussians,
@@ -325,71 +330,103 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             use_trained_exp=dataset.train_test_exp,
             separate_sh=SPARSE_ADAM_AVAILABLE
         )
-
+        
         image_hr = render_pkg["render"]
         viewspace_point_tensor = render_pkg["viewspace_points"]
         visibility_filter = render_pkg["visibility_filter"]
         radii = render_pkg["radii"]
-
+        
         if viewpoint_cam.alpha_mask is not None:
             alpha_mask = viewpoint_cam.alpha_mask.cuda()
             image_hr *= alpha_mask
-
+        
         # ---------------------- GT ----------------------
         gt_image_hr = viewpoint_cam.original_image.cuda()
         gt_image_lr = load_lr_gt(viewpoint_cam, dataset.source_path)
-
+        
         # ---------------------- LR RENDER ----------------------
         lr_height, lr_width = gt_image_lr.shape[1], gt_image_lr.shape[2]
-
+        
         image_lr_rendered = torch.nn.functional.interpolate(
             image_hr.unsqueeze(0),
             size=(lr_height, lr_width),
             mode='area'
         ).squeeze(0)
-
-        # ---------------------- HR LOSS ----------------------
-        Ll1_hr = l1_loss(image_hr, gt_image_hr)
-
+        
+        # ---------------------- HR LOSS (FIXED) ----------------------
+        # Pixel-wise L1 map (IMPORTANT FIX)
+        hr_l1_map = torch.abs(image_hr - gt_image_hr).mean(dim=0, keepdim=True)  # [1,H,W]
+        
+        # ---------------------- CONFIDENCE MASK ----------------------
+        import torch.nn.functional as F
+        
+        # grayscale
+        gray = 0.2989 * gt_image_hr[0] + 0.5870 * gt_image_hr[1] + 0.1140 * gt_image_hr[2]
+        gray = gray.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
+        
+        sobel_x = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], dtype=torch.float32, device="cuda").view(1,1,3,3)
+        sobel_y = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], dtype=torch.float32, device="cuda").view(1,1,3,3)
+        
+        grad_x = F.conv2d(gray, sobel_x, padding=1)
+        grad_y = F.conv2d(gray, sobel_y, padding=1)
+        
+        grad = torch.sqrt(grad_x**2 + grad_y**2)
+        grad = grad / (grad.max() + 1e-6)
+        
+        edge_mask = grad.squeeze(0)  # [1,H,W]
+        
+        # LR-HR consistency
+        gt_hr_down = torch.nn.functional.interpolate(
+            gt_image_hr.unsqueeze(0),
+            size=gt_image_lr.shape[1:],
+            mode='area'
+        ).squeeze(0)
+        
+        consistency = torch.abs(gt_hr_down - gt_image_lr)
+        consistency = consistency.mean(0, keepdim=True)
+        
+        # Softer confidence (LESS aggressive than exp(-5x))
+        conf = torch.exp(-2.0 * consistency)
+        
+        # Final mask (with floor to avoid killing gradients)
+        mask_final = 0.3 + 0.7 * (0.5 * edge_mask + 0.5 * conf)
+        
+        # Apply mask correctly (pixel-wise)
+        loss_hr_l1 = (hr_l1_map * mask_final).mean()
+        
+        # SSIM stays global (important for stability)
         if FUSED_SSIM_AVAILABLE:
             ssim_hr = fused_ssim(image_hr.unsqueeze(0), gt_image_hr.unsqueeze(0))
         else:
             ssim_hr = ssim(image_hr, gt_image_hr)
-
-        loss_hr = (1.0 - opt.lambda_dssim) * Ll1_hr + opt.lambda_dssim * (1.0 - ssim_hr)
-
-        # ---------------------- CONFIDENCE MASK (NEW) ----------------------
-        grad = torch.mean(torch.abs(image_hr[:, :, :-1] - image_hr[:, :, 1:]), dim=0)
-        mask = (grad > 0.03).float().unsqueeze(0)
-
-        loss_hr = loss_hr * (0.5 + 0.5 * mask)   # boost edges only
-        loss_hr = loss_hr.mean()
-
+        
+        loss_hr = (1.0 - opt.lambda_dssim) * loss_hr_l1 + opt.lambda_dssim * (1.0 - ssim_hr)
+        
         # ---------------------- LR LOSS ----------------------
         Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
-
+        
         if FUSED_SSIM_AVAILABLE:
             ssim_lr = fused_ssim(image_lr_rendered.unsqueeze(0), gt_image_lr.unsqueeze(0))
         else:
             ssim_lr = ssim(image_lr_rendered, gt_image_lr)
-
+        
         loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
-
+        
         # ---------------------- SCHEDULING ----------------------
-        phase_1_iters = 12000
-
+        phase_1_iters = 10000
+        
         if iteration <= phase_1_iters:
             curr_lambda_lr = 1.0
             curr_lambda_hr = 0.0
         else:
             progress = min((iteration - phase_1_iters) / 20000, 1.0)
-
-            curr_lambda_hr = 0.4 * progress
+        
+            # Slightly stronger HR than before
+            curr_lambda_hr = 0.6 * progress
             curr_lambda_lr = 1.0
-
-        # ✅ Strong LR anchoring
-        loss = (curr_lambda_hr * loss_hr) + (1.5 * curr_lambda_lr * loss_lr)
-
+        
+        # Strong LR anchoring (reduced slightly from 4 → 3 for balance)
+        loss = (curr_lambda_hr * loss_hr) + (3.0 * curr_lambda_lr * loss_lr)
     
         
 
@@ -436,7 +473,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
                 if iteration > opt.densify_from_iter and iteration % opt.densification_interval == 0:
                     size_threshold = 20 if iteration > opt.opacity_reset_interval else None
-                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
+                    # gaussians.densify_and_prune(opt.densify_grad_threshold, 0.005, scene.cameras_extent, size_threshold, radii)
+                    gaussians.densify_and_prune(opt.densify_grad_threshold, 0.01, scene.cameras_extent, size_threshold, radii)
+                
                 
                 if iteration % opt.opacity_reset_interval == 0 or (dataset.white_background and iteration == opt.densify_from_iter):
                     gaussians.reset_opacity()
