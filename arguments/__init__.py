@@ -47,7 +47,7 @@ class ParamGroup:
 class ModelParams(ParamGroup): 
     def __init__(self, parser, sentinel=False):
         # self.sh_degree = 3
-        self.sh_degree = 2
+        self.sh_degree = 1
         
         self._source_path = ""
         self._model_path = ""
@@ -85,10 +85,10 @@ class OptimizationParams(ParamGroup):
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
         # self.feature_lr = 0.0025
-        self.feature_lr = 0.002
+        self.feature_lr = 0.001
         
         # self.opacity_lr = 0.025
-        self.opacity_lr = 0.05
+        self.opacity_lr = 0.03
         
         self.scaling_lr = 0.005
         self.rotation_lr = 0.001
@@ -111,7 +111,9 @@ class OptimizationParams(ParamGroup):
         # self.densify_until_iter = 15_000
         self.densify_until_iter = 25_000
         
-        self.densify_grad_threshold = 0.0002
+        # self.densify_grad_threshold = 0.0002
+        self.densify_grad_threshold = 0.00035
+        
         # self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_init = 0.1
         
