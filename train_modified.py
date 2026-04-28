@@ -360,9 +360,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         # ---------------------- CONFIDENCE MASK (NEW) ----------------------
         grad = torch.mean(torch.abs(image_hr[:, :, :-1] - image_hr[:, :, 1:]), dim=0)
-        mask = (grad > 0.05).float().unsqueeze(0)
+        mask = (grad > 0.03).float().unsqueeze(0)
 
-        loss_hr = (loss_hr * mask).mean()
+        loss_hr = loss_hr * (0.5 + 0.5 * mask)   # boost edges only
+        loss_hr = loss_hr.mean()
 
         # ---------------------- LR LOSS ----------------------
         Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
@@ -383,11 +384,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             progress = min((iteration - phase_1_iters) / 20000, 1.0)
 
-            curr_lambda_hr = 0.2 * progress
-            curr_lambda_lr = 1
+           curr_lambda_hr = 0.4 * progress
+           curr_lambda_lr = 1.0
 
         # ✅ Strong LR anchoring
-        loss = (curr_lambda_hr * loss_hr) + (3.0 * curr_lambda_lr * loss_lr)
+        loss = (curr_lambda_hr * loss_hr) + (1.5 * curr_lambda_lr * loss_lr)
 
     
         
