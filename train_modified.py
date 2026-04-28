@@ -384,8 +384,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         else:
             progress = min((iteration - phase_1_iters) / 20000, 1.0)
 
-           curr_lambda_hr = 0.4 * progress
-           curr_lambda_lr = 1.0
+            curr_lambda_hr = 0.4 * progress
+            curr_lambda_lr = 1.0
 
         # ✅ Strong LR anchoring
         loss = (curr_lambda_hr * loss_hr) + (1.5 * curr_lambda_lr * loss_lr)
