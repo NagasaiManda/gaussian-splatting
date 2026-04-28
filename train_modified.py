@@ -41,27 +41,27 @@ except:
     SPARSE_ADAM_AVAILABLE = False
 
 
-def get_perturbed_cam(viewpoint_cam, translation_std=0.002, rotation_std=0.001):
-    """
-    Slightly jiggles the camera extrinsics to prevent billboard overfitting.
-    """
-    import copy
-    # Create a shallow copy to avoid modifying the original dataset cameras
-    p_cam = copy.copy(viewpoint_cam)
+# def get_perturbed_cam(viewpoint_cam, translation_std=0.002, rotation_std=0.001):
+#     """
+#     Slightly jiggles the camera extrinsics to prevent billboard overfitting.
+#     """
+#     import copy
+#     # Create a shallow copy to avoid modifying the original dataset cameras
+#     p_cam = copy.copy(viewpoint_cam)
     
-    # Random translation shift
-    shift = torch.randn(3, device="cuda") * translation_std
+#     # Random translation shift
+#     shift = torch.randn(3, device="cuda") * translation_std
     
-    # Apply to the world-to-view matrix
-    # p_cam.world_view_transform is [4, 4]
-    p_cam.world_view_transform = viewpoint_cam.world_view_transform.clone()
-    p_cam.world_view_transform[3, :3] += shift
+#     # Apply to the world-to-view matrix
+#     # p_cam.world_view_transform is [4, 4]
+#     p_cam.world_view_transform = viewpoint_cam.world_view_transform.clone()
+#     p_cam.world_view_transform[3, :3] += shift
     
-    # Recompute the full projection transform used by the rasterizer
-    p_cam.full_proj_transform = (p_cam.world_view_transform @ p_cam.projection_matrix)
-    p_cam.camera_center = p_cam.world_view_transform.inverse()[3, :3]
+#     # Recompute the full projection transform used by the rasterizer
+#     p_cam.full_proj_transform = (p_cam.world_view_transform @ p_cam.projection_matrix)
+#     p_cam.camera_center = p_cam.world_view_transform.inverse()[3, :3]
     
-    return p_cam
+#     return p_cam
 from PIL import Image
 from torchvision import transforms
 
@@ -151,11 +151,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         bg = torch.rand((3), device="cuda") if opt.random_background else background
 
 
-        if iteration < opt.iterations:
-            render_cam = get_perturbed_cam(viewpoint_cam, translation_std=0.001) 
-        else:
-            render_cam = viewpoint_cam
-
+        # if iteration < opt.iterations:
+        #     render_cam = get_perturbed_cam(viewpoint_cam, translation_std=0.001) 
+        # else:
+            # render_cam = viewpoint_cam
+        render_cam = viewpoint_cam
 # Render with the jiggled camera
         render_pkg = render(render_cam, gaussians, pipe, bg, 
                     use_trained_exp=dataset.train_test_exp, 
