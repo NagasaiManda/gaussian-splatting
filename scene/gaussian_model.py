@@ -471,3 +471,35 @@ class GaussianModel:
     def add_densification_stats(self, viewspace_point_tensor, update_filter):
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
+
+    def shuffle_split(self, opacity_thresh=0.5):
+        new_xyz, new_scaling, new_rotation = [], [], []
+        new_opacity, new_features = [], []
+    
+        for i in range(self.get_xyz.shape[0]):
+            if self.get_opacity[i] < opacity_thresh:
+                continue
+    
+            center = self.get_xyz[i]
+            scale = self.get_scaling[i]
+            rot = self.get_rotation[i]
+    
+            offsets = torch.tensor([
+                [1,0,0], [-1,0,0],
+                [0,1,0], [0,-1,0],
+                [0,0,1], [0,0,-1]
+            ], device=center.device, dtype=torch.float32)
+    
+            for o in offsets:
+                new_xyz.append(center + 0.3 * scale * o)
+                new_scaling.append(scale * 0.5)
+                new_rotation.append(rot)
+                new_opacity.append(torch.tensor([0.1], device=center.device))
+                new_features.append(self._features[i])
+    
+        if len(new_xyz) > 0:
+            self._xyz = torch.cat([self._xyz, torch.stack(new_xyz)], dim=0)
+            self._scaling = torch.cat([self._scaling, torch.stack(new_scaling)], dim=0)
+            self._rotation = torch.cat([self._rotation, torch.stack(new_rotation)], dim=0)
+            self._opacity = torch.cat([self._opacity, torch.stack(new_opacity)], dim=0)
+            self._features = torch.cat([self._features, torch.stack(new_features)], dim=0)
