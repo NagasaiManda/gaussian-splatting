@@ -121,6 +121,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             viewpoint_cam = scene.getTrainCameras()[randint(0, len(scene.getTrainCameras()) - 1)]
 
         stage1_iters = 10000
+
+        if iteration == stage1_iters:
+            print("🔥 Switching to Stage 2 + Shuffle Split")
+            gaussians.shuffle_split()
+        
+            # 🔥 Stop densification
+            opt.densify_until_iter = 0
+        
+            # 🔥 Reduce learning rates
+            for g in gaussians.optimizer.param_groups:
+                g['lr'] *= 0.5
   
         if iteration <= stage1_iters:
             stage = 1
@@ -162,6 +173,17 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         if iteration == stage1_iters:
             print("🔥 Applying Shuffle Split")
             gaussians.shuffle_split()
+            for param_group in gaussians.optimizer.param_groups:
+
+                if "feature" in param_group.get("name", ""):
+                    param_group["lr"] = 0.0006
+        
+                elif "opacity" in param_group.get("name", ""):
+                    param_group["lr"] = 0.012
+        
+                else:
+                    # keep position/scaling/rotation smaller reduction
+                    param_group["lr"] *= 0.5
 
         if stage == 2:
             sr_target = gt_image_hr
@@ -223,7 +245,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # Log and save
             training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
-            if (iteration in saving_iterations):
+            if (iteration in saving_iterations) or (iteration == stage1_iters):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
 
