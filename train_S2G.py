@@ -117,8 +117,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack.pop(rand_idx)
         vind = viewpoint_indices.pop(rand_idx)
 
-        if stage == 2 and randint(0, 1) == 0:
-            viewpoint_cam = scene.getTrainCameras()[randint(0, len(scene.getTrainCameras()) - 1)]
+       
 
         stage1_iters = 10000
 
@@ -137,6 +136,9 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             stage = 1
         else:
             stage = 2
+        
+        if stage == 2 and randint(0, 1) == 0:
+            viewpoint_cam = scene.getTrainCameras()[randint(0, len(scene.getTrainCameras()) - 1)]
         # Render
         if (iteration - 1) == debug_from:
             pipe.debug = True
