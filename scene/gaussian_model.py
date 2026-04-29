@@ -472,34 +472,42 @@ class GaussianModel:
         self.xyz_gradient_accum[update_filter] += torch.norm(viewspace_point_tensor.grad[update_filter,:2], dim=-1, keepdim=True)
         self.denom[update_filter] += 1
 
-    def shuffle_split(self, opacity_thresh=0.5):
+    def shuffle_split(self, opacity_thresh=0.7):
         new_xyz, new_scaling, new_rotation = [], [], []
-        new_opacity, new_features = [], []
-    
-        for i in range(self.get_xyz.shape[0]):
-            if self.get_opacity[i] < opacity_thresh:
+        new_opacity = []
+        new_features_dc, new_features_rest = [], []
+
+        for i in range(self._xyz.shape[0]):
+
+            if self._opacity[i] < opacity_thresh:
                 continue
-    
-            center = self.get_xyz[i]
-            scale = self.get_scaling[i]
-            rot = self.get_rotation[i]
-    
+
+            center = self._xyz[i]
+            scale = self._scaling[i]   # 🔥 FIXED
+            rot = self._rotation[i]
+
             offsets = torch.tensor([
                 [1,0,0], [-1,0,0],
                 [0,1,0], [0,-1,0],
-                [0,0,1], [0,0,-1]
             ], device=center.device, dtype=torch.float32)
-    
+
             for o in offsets:
-                new_xyz.append(center + 0.3 * scale * o)
-                new_scaling.append(scale * 0.5)
+                new_xyz.append(center + 0.2 * scale * o)
+                new_scaling.append(scale * 0.6)
                 new_rotation.append(rot)
-                new_opacity.append(torch.tensor([0.1], device=center.device))
-                new_features.append(self._features[i])
-    
+                new_opacity.append(torch.tensor([0.05], device=center.device))
+
+                new_features_dc.append(self._features_dc[i].detach())
+                new_features_rest.append(self._features_rest[i].detach())
+
+            if len(new_xyz) > 20000:
+                break
+
         if len(new_xyz) > 0:
             self._xyz = torch.cat([self._xyz, torch.stack(new_xyz)], dim=0)
             self._scaling = torch.cat([self._scaling, torch.stack(new_scaling)], dim=0)
             self._rotation = torch.cat([self._rotation, torch.stack(new_rotation)], dim=0)
             self._opacity = torch.cat([self._opacity, torch.stack(new_opacity)], dim=0)
-            self._features = torch.cat([self._features, torch.stack(new_features)], dim=0)
+
+            self._features_dc = torch.cat([self._features_dc, torch.stack(new_features_dc)], dim=0)
+            self._features_rest = torch.cat([self._features_rest, torch.stack(new_features_rest)], dim=0)
