@@ -43,6 +43,21 @@ except:
     SPARSE_ADAM_AVAILABLE = False
 
 
+import torchvision.models as models
+import torch.nn.functional as F
+
+# Load pretrained VGG (feature extractor)
+vgg = models.vgg19(pretrained=True).features[:16].cuda().eval()
+
+# Freeze it
+for p in vgg.parameters():
+    p.requires_grad = False
+
+def normalize_vgg(x):
+    mean = torch.tensor([0.485, 0.456, 0.406], device=x.device).view(3,1,1)
+    std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(3,1,1)
+    return (x - mean) / std
+
 def get_perturbed_cam(viewpoint_cam, translation_std=0.002, rotation_std=0.001):
     """
     Slightly jiggles the camera extrinsics to prevent billboard overfitting.
@@ -397,7 +412,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         ).squeeze(0)
         
         # Combine masks
-        mask_final = 0.3 + 0.7 * (0.5 * edge_mask + 0.5 * conf)
+        # mask_final = 0.3 + 0.7 * (0.5 * edge_mask + 0.5 * conf)
+        mask_final = 0.2 + 0.8 * (0.7 * edge_mask + 0.3 * conf)
         
         # Apply mask correctly (pixel-wise)
         loss_hr_l1 = (hr_l1_map * mask_final).mean()
@@ -409,6 +425,21 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             ssim_hr = ssim(image_hr, gt_image_hr)
         
         loss_hr = (1.0 - opt.lambda_dssim) * loss_hr_l1 + opt.lambda_dssim * (1.0 - ssim_hr)
+
+
+        # ---------------------- FEATURE LOSS ----------------------
+        if iteration > 15000:  # only after geometry stabilizes
+            img_vgg = normalize_vgg(image_hr)
+            gt_vgg = normalize_vgg(gt_image_hr)
+        
+            feat_img = vgg(img_vgg.unsqueeze(0))
+            feat_gt = vgg(gt_vgg.unsqueeze(0))
+        
+            loss_feat = torch.abs(feat_img - feat_gt).mean()
+        else:
+            loss_feat = 0.0
+
+        loss_hr += 0.05*loss_feat
         
         # ---------------------- LR LOSS ----------------------
         Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
@@ -430,11 +461,11 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             progress = min((iteration - phase_1_iters) / 20000, 1.0)
         
             # Slightly stronger HR than before
-            curr_lambda_hr = 0.6 * progress
+            curr_lambda_hr = 0.8 * progress
             curr_lambda_lr = 1.0
         
         # Strong LR anchoring (reduced slightly from 4 → 3 for balance)
-        loss = (curr_lambda_hr * loss_hr) + (3.0 * curr_lambda_lr * loss_lr)
+        loss = (curr_lambda_hr * loss_hr) + (2.0 * curr_lambda_lr * loss_lr)
     
         
 
