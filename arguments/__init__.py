@@ -85,7 +85,7 @@ class OptimizationParams(ParamGroup):
         self.position_lr_delay_mult = 0.01
         self.position_lr_max_steps = 30_000
         # self.feature_lr = 0.0025
-        self.feature_lr = 0.001
+        self.feature_lr = 0.0015
         
         # self.opacity_lr = 0.025
         self.opacity_lr = 0.025
@@ -112,7 +112,7 @@ class OptimizationParams(ParamGroup):
         self.densify_until_iter = 18_000
         
         # self.densify_grad_threshold = 0.0002
-        self.densify_grad_threshold = 0.0005
+        self.densify_grad_threshold = 0.00035
         
         # self.depth_l1_weight_init = 1.0
         self.depth_l1_weight_init = 0.1
