@@ -500,8 +500,6 @@ class GaussianModel:
                 new_features_dc.append(self._features_dc[i].detach())
                 new_features_rest.append(self._features_rest[i].detach())
 
-            if len(new_xyz) > 20000:
-                break
 
         if len(new_xyz) > 0:
             self._xyz = torch.cat([self._xyz, torch.stack(new_xyz)], dim=0)
