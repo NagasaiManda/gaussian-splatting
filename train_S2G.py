@@ -121,17 +121,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
         stage1_iters = 10000
 
-        if iteration == stage1_iters:
-            print("🔥 Switching to Stage 2 + Shuffle Split")
-            gaussians.shuffle_split()
-        
-            # 🔥 Stop densification
-            opt.densify_until_iter = 0
-        
-            # 🔥 Reduce learning rates
-            for g in gaussians.optimizer.param_groups:
-                g['lr'] *= 0.5
-  
         if iteration <= stage1_iters:
             stage = 1
         else:
@@ -174,38 +163,42 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             loss = (1 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1 - ssim_val)
         if iteration == stage1_iters:
             print("🔥 Applying Shuffle Split")
-            # opacity = gaussians.get_opacity
-            # mask = (opacity < 0.01).squeeze()    # boolean mask
-            # gaussians.prune_points(mask)
-            # torch.cuda.empty_cache()
+          
+            torch.cuda.empty_cache()
 
-            # 🔥 RESET OPTIMIZER AFTER PRUNE
-            # gaussians.optimizer = None
-            # gaussians.training_setup(opt)
+            # -------- RESET OPTIMIZER --------
+            gaussians.optimizer = None
+            gaussians.training_setup(opt)
+
+            # -------- SPLIT --------
+            print("🔥 Applying Shuffle Split")
+            before = gaussians._xyz.shape[0]
+
             gaussians.shuffle_split()
-            # torch.cuda.empty_cache()
-            # gaussians.optimizer = None
-            # gaussians.training_setup(opt)
 
+            after = gaussians._xyz.shape[0]
+            print(f"After split: {after} (was {before})")
+
+            torch.cuda.empty_cache()
+
+            # -------- DETACH --------
             gaussians._xyz = gaussians._xyz.detach()
             gaussians._scaling = gaussians._scaling.detach()
             gaussians._rotation = gaussians._rotation.detach()
             gaussians._opacity = gaussians._opacity.detach()
             gaussians._features_dc = gaussians._features_dc.detach()
             gaussians._features_rest = gaussians._features_rest.detach()
-            
-            for param_group in gaussians.optimizer.param_groups:
 
-                if "feature" in param_group.get("name", ""):
-                    param_group["lr"] = 0.0006
-        
-                elif "opacity" in param_group.get("name", ""):
-                    param_group["lr"] = 0.012
-        
-                else:
-                    # keep position/scaling/rotation smaller reduction
-                    param_group["lr"] *= 0.5
+            # -------- RESET AGAIN --------
+            gaussians.optimizer = None
+            gaussians.training_setup(opt)
 
+            # -------- LR FIX --------
+            for g in gaussians.optimizer.param_groups:
+                g["lr"] *= 0.7   # NOT too small
+
+            # -------- STOP DENSIFICATION --------
+            opt.densify_until_iter = 0
         if stage == 2:
             sr_target = gt_image_hr
             Ll1 = l1_loss(image, sr_target)
