@@ -195,7 +195,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             # -------- LR FIX --------
             for g in gaussians.optimizer.param_groups:
-                g["lr"] *= 0.7   # NOT too small
+                g["lr"] *= 0.9   # NOT too small
 
             # -------- STOP DENSIFICATION --------
             opt.densify_until_iter = 0
