@@ -58,6 +58,19 @@ def normalize_vgg(x):
     std = torch.tensor([0.229, 0.224, 0.225], device=x.device).view(3,1,1)
     return (x - mean) / std
 
+def compute_gradient_map(x):
+    gray = 0.2989 * x[0] + 0.5870 * x[1] + 0.1140 * x[2]
+    gray = gray.unsqueeze(0).unsqueeze(0)
+
+    sobel_x = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], device="cuda").float().view(1,1,3,3)
+    sobel_y = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], device="cuda").float().view(1,1,3,3)
+
+    gx = F.conv2d(gray, sobel_x, padding=1)
+    gy = F.conv2d(gray, sobel_y, padding=1)
+
+    grad = torch.sqrt(gx**2 + gy**2 + 1e-6)
+    return grad.squeeze(0)
+
 def get_perturbed_cam(viewpoint_cam, translation_std=0.002, rotation_std=0.001):
     """
     Slightly jiggles the camera extrinsics to prevent billboard overfitting.
@@ -368,104 +381,70 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             mode='area'
         ).squeeze(0)
         
-        # ---------------------- HR LOSS (FIXED) ----------------------
-        # Pixel-wise L1 map (IMPORTANT FIX)
-        hr_l1_map = torch.abs(image_hr - gt_image_hr).mean(dim=0, keepdim=True)  # [1,H,W]
-        
-        # ---------------------- CONFIDENCE MASK ----------------------
-        import torch.nn.functional as F
-        
-        # grayscale
-        gray = 0.2989 * gt_image_hr[0] + 0.5870 * gt_image_hr[1] + 0.1140 * gt_image_hr[2]
-        gray = gray.unsqueeze(0).unsqueeze(0)  # [1,1,H,W]
-        
-        sobel_x = torch.tensor([[1,0,-1],[2,0,-2],[1,0,-1]], dtype=torch.float32, device="cuda").view(1,1,3,3)
-        sobel_y = torch.tensor([[1,2,1],[0,0,0],[-1,-2,-1]], dtype=torch.float32, device="cuda").view(1,1,3,3)
-        
-        grad_x = F.conv2d(gray, sobel_x, padding=1)
-        grad_y = F.conv2d(gray, sobel_y, padding=1)
-        
-        grad = torch.sqrt(grad_x**2 + grad_y**2)
-        grad = grad / (grad.max() + 1e-6)
-        
-        edge_mask = grad.squeeze(0)  # [1,H,W]
-        
-        # LR-HR consistency
-        gt_hr_down = torch.nn.functional.interpolate(
-            gt_image_hr.unsqueeze(0),
-            size=gt_image_lr.shape[1:],
-            mode='area'
-        ).squeeze(0)
-        
-        consistency = torch.abs(gt_hr_down - gt_image_lr)
-        consistency = consistency.mean(0, keepdim=True)
-        
-        # Softer confidence (LESS aggressive than exp(-5x))
-        conf = torch.exp(-2.0 * consistency)
+        # ===================== HR LOSS =====================
+        Ll1_hr = l1_loss(image_hr, gt_image_hr)
 
-        # 🔥 Upsample LR confidence to HR
-        conf = torch.nn.functional.interpolate(
-            conf.unsqueeze(0),
-            size=edge_mask.shape[1:],
-            mode='bilinear',
-            align_corners=False
-        ).squeeze(0)
-        
-        # Combine masks
-        # mask_final = 0.3 + 0.7 * (0.5 * edge_mask + 0.5 * conf)
-        mask_final = 0.2 + 0.8 * (0.7 * edge_mask + 0.3 * conf)
-        
-        # Apply mask correctly (pixel-wise)
-        loss_hr_l1 = (hr_l1_map * mask_final).mean()
-        
-        # SSIM stays global (important for stability)
         if FUSED_SSIM_AVAILABLE:
             ssim_hr = fused_ssim(image_hr.unsqueeze(0), gt_image_hr.unsqueeze(0))
         else:
             ssim_hr = ssim(image_hr, gt_image_hr)
-        
-        loss_hr = (1.0 - opt.lambda_dssim) * loss_hr_l1 + opt.lambda_dssim * (1.0 - ssim_hr)
+
+        loss_hr = (1.0 - opt.lambda_dssim) * Ll1_hr + opt.lambda_dssim * (1.0 - ssim_hr)
 
 
-        # ---------------------- FEATURE LOSS ----------------------
-        if iteration > 15000:  # only after geometry stabilizes
-            img_vgg = normalize_vgg(image_hr)
-            gt_vgg = normalize_vgg(gt_image_hr)
-        
-            feat_img = vgg(img_vgg.unsqueeze(0))
-            feat_gt = vgg(gt_vgg.unsqueeze(0))
-        
-            loss_feat = torch.abs(feat_img - feat_gt).mean()
-        else:
-            loss_feat = 0.0
-
-        loss_hr += 0.05*loss_feat
-        
-        # ---------------------- LR LOSS ----------------------
+        # ===================== LR LOSS =====================
         Ll1_lr = l1_loss(image_lr_rendered, gt_image_lr)
-        
+
         if FUSED_SSIM_AVAILABLE:
             ssim_lr = fused_ssim(image_lr_rendered.unsqueeze(0), gt_image_lr.unsqueeze(0))
         else:
             ssim_lr = ssim(image_lr_rendered, gt_image_lr)
-        
+
         loss_lr = (1.0 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1.0 - ssim_lr)
-        
-        # ---------------------- SCHEDULING ----------------------
+
+
+        # ===================== 🔥 STRUCTURAL PRIOR (KEY) =====================
+        # Downsample HR render → compare gradients with LR
+
+        image_hr_down = torch.nn.functional.interpolate(
+            image_hr.unsqueeze(0),
+            size=gt_image_lr.shape[1:],
+            mode='area'
+        ).squeeze(0)
+
+        grad_render = compute_gradient_map(image_hr_down)
+        grad_gt = compute_gradient_map(gt_image_lr)
+
+        loss_struct = torch.abs(grad_render - grad_gt).mean()
+
+
+        # ===================== FEATURE LOSS =====================
+        if iteration > 15000:
+            img_vgg = normalize_vgg(image_hr)
+            gt_vgg = normalize_vgg(gt_image_hr)
+
+            feat_img = vgg(img_vgg.unsqueeze(0))
+            feat_gt = vgg(gt_vgg.unsqueeze(0))
+
+            loss_feat = torch.abs(feat_img - feat_gt).mean()
+        else:
+            loss_feat = 0.0
+
+
+        # ===================== SCHEDULING =====================
         phase_1_iters = 10000
-        
+
         if iteration <= phase_1_iters:
-            curr_lambda_lr = 1.0
-            curr_lambda_hr = 0.0
+            loss = loss_lr
         else:
             progress = min((iteration - phase_1_iters) / 20000, 1.0)
-        
-            # Slightly stronger HR than before
-            curr_lambda_hr = 0.8 * progress
-            curr_lambda_lr = 1.0
-        
-        # Strong LR anchoring (reduced slightly from 4 → 3 for balance)
-        loss = (curr_lambda_hr * loss_hr) + (2.0 * curr_lambda_lr * loss_lr)
+
+            loss = (
+                0.8 * progress * loss_hr +
+                1.5 * loss_lr +                 # anchor
+                0.5 * loss_struct +            # 🔥 structural prior
+                0.05 * loss_feat
+            )
     
         
 
@@ -499,7 +478,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, loss_hr_l1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
+            training_report(tb_writer, iteration,Ll1_hr, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
