@@ -102,8 +102,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 network_gui.conn = None
 
         iter_start.record()
+        stage1_iters = 10000
 
-        gaussians.update_learning_rate(iteration)
+        if iteration <= stage1_iters:
+            gaussians.update_learning_rate(iteration)
 
         # Every 1000 its we increase the levels of SH up to a maximum degree
         if iteration % 1000 == 0:
@@ -119,7 +121,6 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
        
 
-        stage1_iters = 10000
 
         if iteration <= stage1_iters:
             stage = 1
@@ -145,89 +146,92 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         gt_image_hr = viewpoint_cam.original_image.cuda()
         gt_image_lr = load_lr_gt(viewpoint_cam, dataset.source_path)
         
-        if stage == 1:
-            # 🔥 LR-only training
-            image_lr = torch.nn.functional.interpolate(
-                image.unsqueeze(0),
-                size=gt_image_lr.shape[1:],
-                mode='area'
-            ).squeeze(0)
+        # if stage == 1:
+        #     # 🔥 LR-only training
+        #     image_lr = torch.nn.functional.interpolate(
+        #         image.unsqueeze(0),
+        #         size=gt_image_lr.shape[1:],
+        #         mode='area'
+        #     ).squeeze(0)
         
-            Ll1 = l1_loss(image_lr, gt_image_lr)
+        #     Ll1 = l1_loss(image_lr, gt_image_lr)
         
-            if FUSED_SSIM_AVAILABLE:
-                ssim_val = fused_ssim(image_lr.unsqueeze(0), gt_image_lr.unsqueeze(0))
-            else:
-                ssim_val = ssim(image_lr, gt_image_lr)
+        #     if FUSED_SSIM_AVAILABLE:
+        #         ssim_val = fused_ssim(image_lr.unsqueeze(0), gt_image_lr.unsqueeze(0))
+        #     else:
+        #         ssim_val = ssim(image_lr, gt_image_lr)
         
-            loss = (1 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1 - ssim_val)
-        if iteration == stage1_iters:
-            print("🔥 Applying Shuffle Split")
-          
-            torch.cuda.empty_cache()
+        #     loss = (1 - opt.lambda_dssim) * Ll1 + opt.lambda_dssim * (1 - ssim_val)
+        
+        # if stage == 2:
+        #     sr_target = gt_image_hr
+        #     Ll1 = l1_loss(image, sr_target)
+        
+        #     if FUSED_SSIM_AVAILABLE:
+        #         ssim_val = fused_ssim(image.unsqueeze(0), sr_target.unsqueeze(0))
+        #     else:
+        #         ssim_val = ssim(image, sr_target)
+        
+        #     loss_sr = (1 - 0.2) * Ll1 + 0.2 * (1 - ssim_val)
+        
+        #     # AUX: downsample consistency
+        #     image_lr = torch.nn.functional.interpolate(
+        #         image.unsqueeze(0),
+        #         size=gt_image_lr.shape[1:],
+        #         mode='area'
+        #     ).squeeze(0)
+        
+        #     loss_down = l1_loss(image_lr, gt_image_lr)
+        
+        #     # AUX: TV loss
+        #     loss_tv = (
+        #         torch.abs(image[:, :, :-1] - image[:, :, 1:]).mean() +
+        #         torch.abs(image[:, :-1, :] - image[:, 1:, :]).mean()
+        #     )
+        
+        #     loss_aux = 2 * loss_down + 0.1 * loss_tv
+        
+        #     loss = loss_sr + loss_aux
 
-            # -------- RESET OPTIMIZER --------
-            gaussians.optimizer = None
-            gaussians.training_setup(opt)
+        alpha = min((iteration - stage1_iters) / 3000.0, 1.0) if iteration > stage1_iters else 0.0
 
-            # -------- SPLIT --------
-            print("🔥 Applying Shuffle Split")
-            before = gaussians._xyz.shape[0]
+        # LR loss (same as stage 1)
+        image_lr = torch.nn.functional.interpolate(
+            image.unsqueeze(0),
+            size=gt_image_lr.shape[1:],
+            mode='area'
+        ).squeeze(0)
 
-            gaussians.shuffle_split()
+        Ll1_lr = l1_loss(image_lr, gt_image_lr)
 
-            after = gaussians._xyz.shape[0]
-            print(f"After split: {after} (was {before})")
+        if FUSED_SSIM_AVAILABLE:
+            ssim_lr = fused_ssim(image_lr.unsqueeze(0), gt_image_lr.unsqueeze(0))
+        else:
+            ssim_lr = ssim(image_lr, gt_image_lr)
 
-            torch.cuda.empty_cache()
+        loss_lr = (1 - opt.lambda_dssim) * Ll1_lr + opt.lambda_dssim * (1 - ssim_lr)
 
-            # -------- DETACH --------
-            gaussians._xyz = gaussians._xyz.detach()
-            gaussians._scaling = gaussians._scaling.detach()
-            gaussians._rotation = gaussians._rotation.detach()
-            gaussians._opacity = gaussians._opacity.detach()
-            gaussians._features_dc = gaussians._features_dc.detach()
-            gaussians._features_rest = gaussians._features_rest.detach()
+        # HR loss
+        Ll1_hr = l1_loss(image, gt_image_hr)
 
-            # -------- RESET AGAIN --------
-            gaussians.optimizer = None
-            gaussians.training_setup(opt)
+        if FUSED_SSIM_AVAILABLE:
+            ssim_hr = fused_ssim(image.unsqueeze(0), gt_image_hr.unsqueeze(0))
+        else:
+            ssim_hr = ssim(image, gt_image_hr)
 
-            # -------- LR FIX --------
-            for g in gaussians.optimizer.param_groups:
-                g["lr"] *= 0.9   # NOT too small
+        loss_hr = (1 - 0.2) * Ll1_hr + 0.2 * (1 - ssim_hr)
 
-            # -------- STOP DENSIFICATION --------
-            opt.densify_until_iter = 0
-        if stage == 2:
-            sr_target = gt_image_hr
-            Ll1 = l1_loss(image, sr_target)
-        
-            if FUSED_SSIM_AVAILABLE:
-                ssim_val = fused_ssim(image.unsqueeze(0), sr_target.unsqueeze(0))
-            else:
-                ssim_val = ssim(image, sr_target)
-        
-            loss_sr = (1 - 0.2) * Ll1 + 0.2 * (1 - ssim_val)
-        
-            # AUX: downsample consistency
-            image_lr = torch.nn.functional.interpolate(
-                image.unsqueeze(0),
-                size=gt_image_lr.shape[1:],
-                mode='area'
-            ).squeeze(0)
-        
-            loss_down = l1_loss(image_lr, gt_image_lr)
-        
-            # AUX: TV loss
-            loss_tv = (
-                torch.abs(image[:, :, :-1] - image[:, :, 1:]).mean() +
-                torch.abs(image[:, :-1, :] - image[:, 1:, :]).mean()
-            )
-        
-            loss_aux = loss_down + 0.1 * loss_tv
-        
-            loss = loss_sr + loss_aux
+        # AUX
+        loss_down = l1_loss(image_lr, gt_image_lr)
+        loss_tv = (
+            torch.abs(image[:, :, :-1] - image[:, :, 1:]).mean() +
+            torch.abs(image[:, :-1, :] - image[:, 1:, :]).mean()
+        )
+
+        loss_aux = 2 * loss_down + 0.1 * loss_tv
+
+        # 🔥 FINAL LOSS
+        loss = (1 - alpha) * loss_lr + alpha * (loss_hr + loss_aux)
         # Depth regularization
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and viewpoint_cam.depth_reliable:
@@ -258,7 +262,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 progress_bar.close()
 
             # Log and save
-            training_report(tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
+            training_report(tb_writer, iteration, Ll1_lr, loss, l1_loss, iter_start.elapsed_time(iter_end), testing_iterations, scene, render, (pipe, background, 1., SPARSE_ADAM_AVAILABLE, None, dataset.train_test_exp), dataset.train_test_exp)
             if (iteration in saving_iterations) or (iteration == stage1_iters):
                 print("\n[ITER {}] Saving Gaussians".format(iteration))
                 scene.save(iteration)
@@ -291,6 +295,45 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if (iteration in checkpoint_iterations):
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 torch.save((gaussians.capture(), iteration), scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+            if iteration == stage1_iters:
+                print("🔥 Applying Shuffle Split")
+              
+                torch.cuda.empty_cache()
+
+                # -------- RESET OPTIMIZER --------
+                gaussians.optimizer = None
+                gaussians.training_setup(opt)
+
+                # -------- SPLIT --------
+                print("🔥 Applying Shuffle Split")
+                before = gaussians._xyz.shape[0]
+
+                gaussians.shuffle_split()
+
+                after = gaussians._xyz.shape[0]
+                print(f"After split: {after} (was {before})")
+
+                torch.cuda.empty_cache()
+
+                # -------- DETACH --------
+                gaussians._xyz = gaussians._xyz.detach()
+                gaussians._scaling = gaussians._scaling.detach()
+                gaussians._rotation = gaussians._rotation.detach()
+                gaussians._opacity = gaussians._opacity.detach()
+                gaussians._features_dc = gaussians._features_dc.detach()
+                gaussians._features_rest = gaussians._features_rest.detach()
+
+                # -------- RESET AGAIN --------
+                gaussians.optimizer = None
+                gaussians.training_setup(opt)
+
+                # -------- LR FIX --------
+                for g in gaussians.optimizer.param_groups:
+                    g["lr"] *= 0.9   # NOT too small
+
+                # -------- STOP DENSIFICATION --------
+                opt.densify_until_iter = 0
 
 def prepare_output_and_logger(args):    
     if not args.model_path:
