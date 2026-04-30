@@ -507,9 +507,13 @@ class GaussianModel:
                 # 🔥 better initialization
                 new_opacity.append(torch.tensor([[0.05]], device=center.device))
 
-                new_features_dc.append(self._features_dc[i].unsqueeze(0).detach())
-                new_features_rest.append(self._features_rest[i].unsqueeze(0).detach())
+                # new_features_dc.append(self._features_dc[i].unsqueeze(0).detach())
+                # new_features_rest.append(self._features_rest[i].unsqueeze(0).detach())
+                noise_dc = 0.01 * torch.randn_like(self._features_dc[i])
+                noise_rest = 0.01 * torch.randn_like(self._features_rest[i])
 
+                new_features_dc.append((self._features_dc[i] + noise_dc).unsqueeze(0))
+                new_features_rest.append((self._features_rest[i] + noise_rest).unsqueeze(0))
             # # 🔥 safety cap (VERY important)
             # if len(new_xyz) > 20000:
             #     break
